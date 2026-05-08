@@ -78,6 +78,10 @@ void AirConditioner::control(const Control &control) {
     hasUpdate = true;
     status.setTargetTemp(control.targetTemp.value());
   }
+  if (control.ionizer.hasUpdate(this->m_ionizer)) {
+    hasUpdate = true;
+    status.setIonizer(control.ionizer.value());
+  }
   if (hasUpdate) {
     this->m_sendControl = true;
     status.setMode(mode);

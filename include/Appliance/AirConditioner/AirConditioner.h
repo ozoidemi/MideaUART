@@ -16,6 +16,7 @@ struct Control {
   Optional<Preset> preset{};
   Optional<FanMode> fanMode{};
   Optional<SwingMode> swingMode{};
+  Optional<bool> ionizer{};
 };
 
 class AirConditioner : public ApplianceBase {
