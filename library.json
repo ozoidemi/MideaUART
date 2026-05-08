@@ -18,6 +18,8 @@
   ],
   "license": "MIT",
   "dependencies": {
+    "ESP8266WiFi": "*",
+    "WiFi": "*"
   },
   "frameworks": "arduino",
   "platforms": ["espressif8266", "espressif32"]
