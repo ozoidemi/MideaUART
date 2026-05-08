@@ -115,6 +115,10 @@ class StatusData : public FrameData {
   bool isFahrenheits() const { return this->m_getValue(10, 4); }
   void setFahrenheits(bool state) { this->m_setMask(10, state, 4); }
 
+  // Mshield ionizer: body byte 8, bit 5 (mask 0x20). Verified empirically on MAW12AV1QWT-C.
+  // Note: m_getTurbo() checks the same bit; on this unit there is no turbo hardware.
+  bool getIonizer() const { return this->m_getValue(8, 32); }
+
  protected:
   /* POWER */
   bool m_getPower() const { return this->m_getValue(1, 1); }
