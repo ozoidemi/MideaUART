@@ -85,8 +85,9 @@ void AirConditioner::control(const Control &control) {
     this->m_sendControl = true;
     status.setMode(mode);
     status.setPreset(preset);
-    // setPreset calls m_setTurbo(false) which clears m_data[8] bit 5 — the same
-    // bit used by setIonizer. Apply ionizer after setPreset so it isn't wiped.
+    // Apply ionizer after setPreset. setPreset(ECO) calls m_setEco which only
+    // touches m_data[9] bit 7 (not bit 5 used by ionizer), so ordering is safe
+    // either way, but explicit post-preset application is clearer.
     bool ionState = control.ionizer.hasUpdate(this->m_ionizer)
                     ? control.ionizer.value() : this->m_ionizer;
     status.setIonizer(ionState);

@@ -115,11 +115,13 @@ class StatusData : public FrameData {
   bool isFahrenheits() const { return this->m_getValue(10, 4); }
   void setFahrenheits(bool state) { this->m_setMask(10, state, 4); }
 
-  // Mshield ionizer: body byte 8, bit 5 (mask 0x20). Verified empirically on MAW12AV1QWT-C.
-  // Note: m_getTurbo() checks the same bit; on this unit there is no turbo hardware.
-  bool getIonizer() const { return this->m_getValue(8, 32); }
-  // Write bit is unconfirmed (hypothesis: same as read). Verify empirically before shipping.
-  void setIonizer(bool state) { this->m_setMask(8, state, 32); }
+  // Mshield ionizer: m_data[9] bit 5 (mask 0x20) = raw UART byte 19 (Frame OFFSET_DATA=10,
+  // so m_data[9] = raw[19]). Verified empirically on MAW12AV1QWT-C via UART capture.
+  // Note: ECO mode uses the same byte (m_data[9] bit 4 read, bit 7 write); different bits,
+  // no conflict. m_getTurbo() uses m_data[8], a completely different byte.
+  bool getIonizer() const { return this->m_getValue(9, 32); }
+  // Write bit is unconfirmed (hypothesis: same as read, bit 5). Verify empirically.
+  void setIonizer(bool state) { this->m_setMask(9, state, 32); }
 
  protected:
   /* POWER */
