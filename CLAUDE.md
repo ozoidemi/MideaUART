@@ -30,8 +30,8 @@ All committed and pushed to `feat/ionizer-support`:
   index 8 (wrong); corrected to index 9.
 - **Write path** (`52100f5`) — `Control.ionizer`, `setIonizer()`, and
   `control()` propagation all implemented. `setIonizer()` writes `m_data[9]`
-  bit 5 (same hypothesis as read). **Write bit position still unconfirmed.**
-  Requires empirical verification on the unit.
+  bit 5 (mask 0x20) — **same byte and bit as read side. CONFIRMED empirically
+  via firmware test (logs(3): 3 complete ON/OFF cycles, all AC echoes correct).**
 - **library.json** (`c5d019a`) — Added `"ESP8266WiFi": "*"` dependency so
   PlatformIO puts ESP8266WiFi headers on the library's include path when
   building from a git URL (not the registry). Without this, `ApplianceBase.cpp`
@@ -51,17 +51,28 @@ In `esphome/components/midea/` within this repo (used via `external_components`)
 
 - **Read path**: VERIFIED. Firmware flashed successfully; ionizer state
   changes tracked correctly in ESPHome when toggled from the panel.
-- **Write path**: IN PROGRESS. Switch entity added to ESPHome YAML; pending
-  successful build + flash to test. Write bit position still unconfirmed.
+- **Write path**: VERIFIED. Switch entity tested end-to-end; ionizer LED on
+  the AC turns on/off in sync with HA switch state. Write bit position
+  confirmed: `m_data[9]` bit 5 (mask 0x20), same as read. No display message
+  expected — the "ON"/"OF" flash is physical-panel-only (SWING+FLASHCOOL chord);
+  UART SET commands bypass that display path entirely.
 
 ### Remaining work
 
-1. Fix current build error (stale external_components cache — see "Build
-   infrastructure" below) so the switch compiles.
-2. Flash and test write path: send `set_ionizer(true)`, watch AC display for
-   "ON"/"OF" flash.
-3. Capture SET frame to confirm write bit position empirically.
-4. Optional: Update README with ionizer usage example.
+1. Investigate ECO+ionizer interaction: ECO preset was observed to be dropped
+   from HA after the first ionizer toggle while ECO was active. Root cause
+   unclear — code analysis shows the SET frame should carry both ECO write bit
+   (m_data[9] 0x80) and ionizer bit (0x20) = 0xB0, so may be AC firmware
+   behavior rather than a library bug. Needs a controlled test with ESPHome
+   debug logging of the outgoing SET frame bytes to confirm.
+
+   Observed in logs(3): at 13:25:58, ionizer SET TX had raw byte 19 = 0x10
+   (just the ECO read bit from the clone; neither ECO write bit 0x80 nor
+   ionizer bit 0x20 were present). The AC responded with m_data[9] = 0x00
+   (ECO dropped, ionizer not set). Code analysis predicts 0xB0 should be sent;
+   the discrepancy is unexplained. Subsequent ionizer-only cycles (ECO already
+   off) worked correctly with m_data[9] = 0x20.
+2. Optional: Update README with ionizer usage example.
 
 ---
 
@@ -89,10 +100,11 @@ conflict.
 
 - Frame layout: `AA <len=0x23> AC ... <body starts at byte 11> ...`
 - Total length: 35 bytes (body is shorter than the response body!)
-- **Bit position is UNCONFIRMED.** Implemented as hypothesis: `m_data[9]`
-  bit 5 (mask 0x20) — same byte and bit as read side.
-- The EcoMode asymmetry precedent (read bit 4, write bit 7, same byte) means
-  symmetry cannot be assumed. Must verify empirically.
+- **Ionizer write bit CONFIRMED: `m_data[9]` bit 5 (mask 0x20) — same byte
+  and bit as read side.** Verified via firmware test (logs(3)): 3 complete
+  ON/OFF cycles; AC LED and echoed status byte both tracked the SET command.
+- Unlike EcoMode (read bit 4 / write bit 7), ionizer read and write use the
+  same bit 5. The asymmetry is model-specific; symmetry held here.
 
 ### Critical asymmetry: EcoMode
 
