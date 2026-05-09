@@ -80,18 +80,23 @@ void AirConditioner::control(const Control &control) {
   }
   if (control.ionizer.hasUpdate(this->m_ionizer)) {
     hasUpdate = true;
-    status.setIonizer(control.ionizer.value());
   }
   if (hasUpdate) {
     this->m_sendControl = true;
     status.setMode(mode);
     status.setPreset(preset);
+    // setPreset calls m_setTurbo(false) which clears m_data[8] bit 5 — the same
+    // bit used by setIonizer. Apply ionizer after setPreset so it isn't wiped.
+    bool ionState = control.ionizer.hasUpdate(this->m_ionizer)
+                    ? control.ionizer.value() : this->m_ionizer;
+    status.setIonizer(ionState);
     status.setBeeper(this->m_beeper);
     status.appendCRC();
     if (isModeChanged && preset != Preset::PRESET_NONE && preset != Preset::PRESET_SLEEP) {
       // Last command with preset
       this->m_setStatus(status);
       status.setPreset(Preset::PRESET_NONE);
+      if (ionState) status.setIonizer(true);
       status.setBeeper(false);
       status.updateCRC();
       // First command without preset
