@@ -115,9 +115,7 @@ class StatusData : public FrameData {
   bool isFahrenheits() const { return this->m_getValue(10, 4); }
   void setFahrenheits(bool state) { this->m_setMask(10, state, 4); }
 
-  // Mshield ionizer: m_data[9] bit 5 (mask 0x20) = raw UART byte 19 (Frame OFFSET_DATA=10,
-  // so m_data[9] = raw[19]). Read and write use the same bit — confirmed empirically on
-  // MAW12AV1QWT-C (unlike ECO: read bit 4, write bit 7). m_getTurbo() uses m_data[8].
+  /* IONIZER */
   bool getIonizer() const { return this->m_getValue(9, 32); }
   void setIonizer(bool state) { this->m_setMask(9, state, 32); }
 
@@ -127,7 +125,10 @@ class StatusData : public FrameData {
   void m_setPower(bool state) { this->m_setMask(1, state, 1); }
   /* ECO MODE */
   bool m_getEco() const { return this->m_getValue(9, 16); }
-  void m_setEco(bool state) { this->m_setMask(9, state, 128); }
+  void m_setEco(bool state) {
+    this->m_setMask(9, state, 128);
+    this->m_setMask(9, !state, 16);
+  }
   /* TURBO MODE */
   bool m_getTurbo() const { return this->m_getValue(8, 32) || this->m_getValue(10, 2); }
   void m_setTurbo(bool state) {
