@@ -19,11 +19,11 @@ verified this empirically (see "Empirical findings" below). The bit just
 isn't decoded by the upstream library, because no public Midea app or
 remote ever exposes it.
 
-## Current status (as of 2026-05-09)
+## Current status (as of 2026-05-10)
 
 ### C++ library changes — DONE
 
-All committed and pushed to `feat/ionizer-support`:
+All committed to `feat/ionizer-support`:
 
 - **Read path** (`e1a67d3`) — `getIonizer()` decodes `m_data[9]` (raw UART
   byte 19) mask 0x20 from 0xC0 status frames. Note: original commit used
@@ -36,6 +36,10 @@ All committed and pushed to `feat/ionizer-support`:
   PlatformIO puts ESP8266WiFi headers on the library's include path when
   building from a git URL (not the registry). Without this, `ApplianceBase.cpp`
   line 6 (`#include <ESP8266WiFi.h>`) fails to compile.
+- **m_setEco fix** — `m_setEco(false)` now explicitly sets bit 4 (0x10) so the
+  AC receives the "disable ECO" signal rather than the no-op 0x00. Fixes the
+  ECO dropout observed when toggling ionizer while ECO was active (logs(3)).
+  See "ECO three-state SET protocol" in Empirical findings.
 
 ### ESPHome component changes — DONE
 
@@ -59,20 +63,11 @@ In `esphome/components/midea/` within this repo (used via `external_components`)
 
 ### Remaining work
 
-1. Investigate ECO+ionizer interaction: ECO preset was observed to be dropped
-   from HA after the first ionizer toggle while ECO was active. Root cause
-   unclear — code analysis shows the SET frame should carry both ECO write bit
-   (m_data[9] 0x80) and ionizer bit (0x20) = 0xB0, so may be AC firmware
-   behavior rather than a library bug. Needs a controlled test with ESPHome
-   debug logging of the outgoing SET frame bytes to confirm.
-
-   Observed in logs(3): at 13:25:58, ionizer SET TX had raw byte 19 = 0x10
-   (just the ECO read bit from the clone; neither ECO write bit 0x80 nor
-   ionizer bit 0x20 were present). The AC responded with m_data[9] = 0x00
-   (ECO dropped, ionizer not set). Code analysis predicts 0xB0 should be sent;
-   the discrepancy is unexplained. Subsequent ionizer-only cycles (ECO already
-   off) worked correctly with m_data[9] = 0x20.
-2. Optional: Update README with ionizer usage example.
+1. Optional: Update README with ionizer usage example.
+2. Optional: Open PR to upstream dudanov/MideaUART (library changes only —
+   StatusData.h, AirConditioner.h, AirConditioner.cpp). The ESPHome component
+   changes are not applicable to upstream. Disclose model-specificity
+   (MAW12AV1QWT-C) in the PR description.
 
 ---
 
@@ -106,19 +101,36 @@ conflict.
 - Unlike EcoMode (read bit 4 / write bit 7), ionizer read and write use the
   same bit 5. The asymmetry is model-specific; symmetry held here.
 
-### Critical asymmetry: EcoMode
+### ECO three-state SET protocol (verified empirically, logs(3))
 
-This was discovered while reading `StatusData.h:123-124`:
+In SET frames (opcode 0x40), `m_data[9]` encodes ECO intent as three states:
+- `0x80` (bit 7 set): enable ECO
+- `0x10` (bit 4 set): disable ECO
+- `0x00` (neither): no change — AC ignores, keeps current ECO state
 
+Upstream `m_setEco(false)` only cleared bit 7, never set bit 4. Any SET
+after an ECO-active status response carried `0x10` (the read flag from
+`copyStatus`) silently — and the AC interpreted that as "disable ECO".
+Fixed: `m_setEco` now calls `m_setMask(9, !state, 16)` in addition to the
+existing `m_setMask(9, state, 128)`.
+
+`copyStatus` contamination: `copyStatus` memcpys `m_data[1..10]` from
+response frames. When ECO is active, `m_data[9] = 0x10` (bit 4 = ECO read
+flag). This persisted in `m_status` and rode into every subsequent SET clone
+— the mechanism behind the ECO dropout in logs(3).
+
+### Critical asymmetry: EcoMode (resolved)
+
+`StatusData.h` read vs write bits are not symmetric:
 ```cpp
-bool m_getEco() const { return this->m_getValue(9, 16); }   // mask 0x10 = bit 4
-void m_setEco(bool state) { this->m_setMask(9, state, 128); }  // mask 0x80 = bit 7
+bool m_getEco() const { return this->m_getValue(9, 16); }   // bit 4 (0x10) — read
+void m_setEco(bool state) { ... m_setMask(9, state, 128); } // bit 7 (0x80) — write enable
+                                                             // bit 4 (0x10) — write disable (fixed)
 ```
 
-Same byte index (9), different bit position (bit 4 read vs bit 7 write).
-The library's existing code proves the response and SET layouts are not
-field-for-field symmetric. **The ionizer write bit position must be
-verified empirically or sourced from a protocol spec, not assumed.**
+This proves the response and SET frame layouts are not field-for-field
+symmetric. Ionizer (bit 5 = 0x20) was verified to use the same bit on
+both read and write — asymmetry does not apply here.
 
 ### No overlap with Turbo
 
@@ -200,17 +212,20 @@ Ionizer follows the public standalone pattern:
 - `Optional<bool> ionizer` field on `Control` (using the library's custom
   `dudanov::Optional<T>`, not `std::optional<T>`)
 
-## Control → SET frame data flow (from `AirConditioner.cpp:41-101`)
+## Control → SET frame data flow (from `AirConditioner.cpp`)
 
 1. `control()` clones the last known state: `StatusData status = this->m_status`
 2. For each `Optional<T>` field in `Control`: calls `.hasUpdate(currentMemberVar)` —
-   if true, calls the corresponding `status.setXxx()` setter
-3. `status.setBeeper(this->m_beeper)`, then `status.appendCRC()`
+   if true, sets `hasUpdate = true` AND calls the corresponding `status.setXxx(value)`
+   (ionizer follows this exact same pattern as targetTemp, fanMode, swingMode)
+3. `status.setMode(mode)`, `status.setPreset(preset)`, `status.setBeeper(this->m_beeper)`,
+   then `status.appendCRC()`
 4. Passes the StatusData object directly to `m_setStatus()` →
    `m_queueRequestPriority(FrameType::DEVICE_CONTROL, std::move(status), ...)`
 
 The `StatusData` object's `m_data` vector IS the wire frame body. No
-intermediate serialization step.
+intermediate serialization step. If ionizer is not being changed, the clone
+from `m_status` already carries the correct bit — no explicit re-application needed.
 
 ## Project file structure
 
