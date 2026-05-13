@@ -3,6 +3,8 @@ This fork focuses on Midea MAW12AV1QWT-C A/C from Costco (US) exclusively.
 
 This specific unit has a ionizer function that is only accessible via the front panel. This fork addresses that gap so that the ionizer can be activated via software.
 
+All the descrtiptions below belong to the original project by Dudanov.
+
 # MideaUART
 
 Arduino framework library for controlling Midea home appliances using the UART protocol.
