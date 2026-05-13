@@ -19,7 +19,7 @@ verified this empirically (see "Empirical findings" below). The bit just
 isn't decoded by the upstream library, because no public Midea app or
 remote ever exposes it.
 
-## Current status (as of 2026-05-10)
+## Current status (as of 2026-05-13)
 
 ### C++ library changes — DONE
 
@@ -60,14 +60,19 @@ In `esphome/components/midea/` within this repo (used via `external_components`)
   confirmed: `m_data[9]` bit 5 (mask 0x20), same as read. No display message
   expected — the "ON"/"OF" flash is physical-panel-only (SWING+FLASHCOOL chord);
   UART SET commands bypass that display path entirely.
+- **ECO+ionizer coexistence**: VERIFIED 24/24. Automated 3-cycle / 8-check
+  script (ac-living-room.yaml v2.10) confirmed all ECO↔ionizer state crossings
+  correct: preset changes don't affect ionizer, ionizer changes don't affect
+  ECO, and both can be active simultaneously without interference.
 
 ### Remaining work
 
-1. Optional: Update README with ionizer usage example.
-2. Optional: Open PR to upstream dudanov/MideaUART (library changes only —
-   StatusData.h, AirConditioner.h, AirConditioner.cpp). The ESPHome component
-   changes are not applicable to upstream. Disclose model-specificity
-   (MAW12AV1QWT-C) in the PR description.
+1. Optional: Push `feat/ionizer-support` cleanup commits to origin (requires
+   explicit approval) so the deployed firmware picks up the m_setEco fix on
+   the next OTA build.
+2. **DO NOT open a PR to upstream dudanov/MideaUART.** This fork is
+   model-specific (MAW12AV1QWT-C) and will not be submitted upstream.
+3. Optional: Update README with ionizer usage example.
 
 ---
 
