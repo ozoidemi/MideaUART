@@ -1,0 +1,287 @@
+# =============================================================================
+# Midea A/C — Living Room (SLWF-01Pro v2 dongle, ESP8266)
+# =============================================================================
+# Production config. Adds read-only ionizer (Mshield) state reporting.
+#
+# How ionizer reporting works:
+#   The upstream `midea` ESPHome component (and the dudanov/MideaUART library
+#   underneath it) does not decode the ionizer bit from the AC's status
+#   response frames. The bit IS sent by the AC — it's just at an offset the
+#   library doesn't surface. We confirmed this by capturing UART traffic
+#   while toggling the panel: bit 5 of byte 19 in the polled status response
+#   tracks ionizer state cleanly across all observed transitions, and never
+#   flips spuriously.
+#
+#   Rather than fork the midea component, we passively observe the same
+#   bytes via the UART debug hook and expose the bit as a binary_sensor.
+#   This is read-only and does not interfere with the midea component's
+#   ownership of the bus.
+#
+# Known limitations:
+#   - The ionizer is panel-only (SWING+FLASHCOOL chord, hold 3s). No remote
+#     button, no app exposure, no Matter exposure. The display shows ON/OF
+#     briefly when toggled. The user must walk to the AC to change it.
+#     The AC Ionizer switch entity allows HA/UART control as well.
+#   - This binary_sensor reflects the AC's actual state, so if the unit is
+#     unplugged and the ionizer state resets, this entity will follow.
+#
+# FlashCool note:
+#   FlashCool is NOT the same as the BOOST preset on this model — it's a
+#   separate IR-only feature. Capturing it for replay via remote_transmitter
+#   is a future task; not addressed in this revision.
+# =============================================================================
+
+substitutions:
+  name: "ac-living-room"
+  friendly_name: "AC Living Room"
+  sntp_update_interval: 6h
+  wifi_fast_connect: "true"
+  log_level: "DEBUG"
+
+  visual_min_temperature: "16 °C"
+  visual_max_temperature: "30 °C"
+  visual_temperature_step: "1.0 °C"
+
+esphome:
+  name: "${name}"
+  friendly_name: "${friendly_name}"
+  name_add_mac_suffix: False
+  project:
+    name: SMLIGHT.SLWF-01Pro
+    # Version history:
+    #   2.6 — added read-only ionizer binary_sensor via UART debug hook
+    #   2.7 — three small fixes:
+    #         (a) initial-state bug: ionizer entity was stuck "unknown" until
+    #             the first off→on transition because the parser only fired
+    #             on changes; now publishes on the very first frame too.
+    #         (b) removed web_server (HA API is the only control surface;
+    #             no need for a second unauthenticated control plane).
+    #         (c) added captive_portal so the wifi.ap fallback is actually
+    #             usable for credential recovery if the device loses the
+    #             home network.
+    #   2.8 — switched from platformio_options lib_deps to external_components
+    #         so ESPHome uses our fork's air_conditioner.h (with get_ionizer /
+    #         set_ionizer). Added ionizer switch entity for write-path testing.
+    #   2.9 — ECO+Ionizer Test (temp): programmatic 3-cycle / 24-check script.
+    #         Verified 24/24. Removed in 2.11.
+    #   2.11 — Remove ECO+ionizer test scaffolding (passed 24/24, no longer needed).
+    version: "2.11"
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/ozoidemi/MideaUART.git
+      ref: feat/ionizer-support
+    components: [midea]
+
+esp8266:
+  board: esp12e
+
+logger:
+  baud_rate: 115200
+  level: ${log_level}
+  # Keep the raw uart_debug byte spam out of the normal log.
+  # The ionizer parser still runs; it just doesn't print every frame.
+  logs:
+    uart_debug: WARN
+
+api:
+  encryption:
+    key: !secret homeassistant_api_encryption_key_ac_living_room
+
+ota:
+  - platform: esphome
+    password: !secret ota_update_password_ac_living_room
+
+wifi:
+  networks:
+    - ssid: !secret wifi_ssid
+      password: !secret wifi_password
+  fast_connect: "${wifi_fast_connect}"
+  power_save_mode: LIGHT
+  min_auth_mode: WPA2
+  ap:
+    ssid: !secret wifi_ssid_fallback_11
+    password: !secret wifi_password_fallback_ac_living_room
+
+# Captive portal pairs with the wifi.ap fallback above. It only activates
+# when the device fails to join the home network and brings up its own AP.
+# Then it serves a single page that lets you re-enter wifi credentials —
+# nothing else. It does NOT expose entity state or controls, and it is not
+# reachable while the device is on the home network. This is the lightweight
+# recovery counterpart to web_server, with a much smaller threat surface:
+# an attacker would have to be in radio range of a device that's already
+# disconnected from the network and broadcasting an SOS.
+captive_portal:
+
+time:
+  - platform: sntp
+    id: sntp_time
+    update_interval: ${sntp_update_interval}
+    servers:
+      - !secret sntp_server
+      - pool.ntp.org
+
+# -----------------------------------------------------------------------------
+# Globals: hold the latest decoded ionizer state so the binary_sensor template
+# can read it. Single bit, single source of truth.
+# -----------------------------------------------------------------------------
+globals:
+  - id: g_ionizer_bit
+    type: bool
+    initial_value: 'false'
+    restore_value: no   # always re-read from the AC after boot
+
+# -----------------------------------------------------------------------------
+# UART: same wiring as before. The midea component is the actual bus consumer;
+# we use the debug.sequence hook only to passively observe response frames.
+# -----------------------------------------------------------------------------
+uart:
+  id: uart_midea
+  tx_pin: 12
+  rx_pin: 14
+  baud_rate: 9600
+  debug:
+    direction: RX
+    dummy_receiver: false
+    after:
+      delimiter: "\n"     # never matches; rely on idle timeout for frame end
+      timeout: 50ms
+      bytes: 256
+    sequence:
+      - lambda: |-
+          // Ionizer parsing — polled status response only (0xAA 0x2C ...).
+          if (bytes.size() < 22) return;
+          if (bytes[0] != 0xAA) return;
+          if (bytes[1] != 0x2C) return;
+
+          // Bit 5 of byte 19 is the ionizer (Mshield) state on the MAW12AV1QWT-C.
+          bool ion = (bytes[19] & 0x20) != 0;
+
+          // Seed entity on first qualifying frame; publish on every change.
+          // has_state() self-recovers if the entity resets on HA reconnection.
+          if (!id(ionizer_state).has_state() || ion != id(g_ionizer_bit)) {
+            id(g_ionizer_bit) = ion;
+            id(ionizer_state).publish_state(ion);
+          }
+
+remote_transmitter:
+  id: ir_tx
+  pin: GPIO13
+  carrier_duty_percent: 100%
+
+climate:
+  - platform: midea
+    name: ${friendly_name}
+    id: midea_climate
+    uart_id: uart_midea
+    period: 1s
+    timeout: 2s
+    num_attempts: 3
+    autoconf: true
+    beeper: true
+    visual:
+      min_temperature: "${visual_min_temperature}"
+      max_temperature: "${visual_max_temperature}"
+      temperature_step: "${visual_temperature_step}"
+    supported_modes:
+      - FAN_ONLY
+      - COOL
+      - DRY
+    custom_fan_modes:
+      - SILENT
+      - TURBO
+    supported_presets:
+      - ECO
+      - BOOST
+      - SLEEP
+    custom_presets:
+      - FREEZE_PROTECTION
+    supported_swing_modes:
+      - VERTICAL
+    outdoor_temperature:
+      name: ${friendly_name} Outdoor Temperature
+    power_usage:
+      name: ${friendly_name} Power Usage
+    humidity_setpoint:
+      name: ${friendly_name} Indoor Humidity
+
+binary_sensor:
+  - platform: template
+    name: ${friendly_name} Ionizer
+    id: ionizer_state
+    icon: mdi:air-purifier
+    # No `lambda:` poll function — we publish_state directly from the UART
+    # parser when the bit changes. This keeps HA's history clean: one event
+    # per actual transition, not one per second.
+
+button:
+  - platform: factory_reset
+    id: factory_reset_btn
+    name: Factory reset
+
+  - platform: template
+    name: ${friendly_name} Display Toggle
+    id: midea_display_toggle
+    icon: mdi:theme-light-dark
+    on_press:
+      - midea_ac.display_toggle:
+
+  - platform: template
+    name: ${friendly_name} Swing Step
+    id: midea_swing_step
+    icon: mdi:tailwind
+    on_press:
+      - midea_ac.swing_step:
+
+switch:
+  - platform: template
+    name: ${friendly_name} Beeper
+    id: midea_beeper
+    icon: mdi:volume-source
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: true
+    turn_on_action:
+      - midea_ac.beeper_on:
+    turn_off_action:
+      - midea_ac.beeper_off:
+  - platform: template
+    name: "AC Ionizer"
+    id: ac_ionizer
+    optimistic: false
+    turn_on_action:
+      - lambda: id(midea_climate).set_ionizer(true);
+    turn_off_action:
+      - lambda: id(midea_climate).set_ionizer(false);
+
+sensor:
+  - platform: wifi_signal
+    name: ${friendly_name} Wi-Fi Signal
+    update_interval: 60s
+  - platform: uptime
+    name: "Uptime"
+    id: uptime_sec
+    internal: true
+  - platform: template
+    name: ${friendly_name} Uptime Days
+    lambda: |-
+      return (id(uptime_sec).state/60)/60/24;
+    icon: mdi:clock-start
+    unit_of_measurement: days
+    update_interval: 60s
+
+script:
+  - id: on_button_click
+    then:
+      - midea_ac.power_toggle:
+
+interval:
+  - interval: 3s
+    then:
+      - lambda: id(ac_ionizer).publish_state(id(midea_climate).get_ionizer());
+
+
+# No web_server block by design. The HA API (above) is the only control
+# surface we expose. The ESPHome web_server is HTTP-only, unauthenticated,
+# and provides functionality that HA already covers — leaving it enabled
+# is unnecessary attack surface even on a segmented IoT VLAN.
