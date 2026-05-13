@@ -71,7 +71,7 @@ def register_action(name, type_, schema):
 
 
 ALLOWED_CLIMATE_MODES = {
-    "HEAT_COOL": ClimateMode.CLIMATE_MODE_HEAT_COOL,
+    "AUTO": ClimateMode.CLIMATE_MODE_AUTO,
     "COOL": ClimateMode.CLIMATE_MODE_COOL,
     "HEAT": ClimateMode.CLIMATE_MODE_HEAT,
     "DRY": ClimateMode.CLIMATE_MODE_DRY,

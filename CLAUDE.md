@@ -21,6 +21,14 @@ remote ever exposes it.
 
 ## Current status (as of 2026-05-13)
 
+### ac-living-room.yaml — current version: 2.13
+
+- v2.8 — switched to `external_components` for our fork
+- v2.9/2.10 — ECO+ionizer test (passed 24/24, removed in v2.11)
+- v2.11 — test scaffolding removed
+- v2.12 — `HEAT_COOL` added explicitly to `supported_modes` (was autoconf-gated)
+- v2.13 — Remap `HEAT_COOL` → `AUTO` in `ac_adapter.cpp` and `climate.py`; HA now renders the mode as "Auto". Wire protocol unchanged.
+
 ### C++ library changes — DONE
 
 All committed to `feat/ionizer-support`:
@@ -50,6 +58,11 @@ In `esphome/components/midea/` within this repo (used via `external_components`)
 - **`climate.py`** (`3313de1`) — Modified `to_code()` to reference our fork
   and to explicitly add `ESP8266WiFi` (ESP8266) or `WiFi` (ESP32) as a
   project-level library dep.
+- **`climate.py` + `ac_adapter.cpp`** — Renamed `HEAT_COOL` → `AUTO` in
+  `ALLOWED_CLIMATE_MODES` and switched all three `CLIMATE_MODE_HEAT_COOL`
+  references in `ac_adapter.cpp` to `CLIMATE_MODE_AUTO`. HA now displays the
+  mode as "Auto" natively. Wire protocol unchanged: `MideaMode::MODE_AUTO`
+  still sent over UART.
 
 ### Hardware testing status
 
@@ -67,12 +80,30 @@ In `esphome/components/midea/` within this repo (used via `external_components`)
 
 ### Remaining work
 
-1. Optional: Push `feat/ionizer-support` cleanup commits to origin (requires
-   explicit approval) so the deployed firmware picks up the m_setEco fix on
-   the next OTA build.
-2. **DO NOT open a PR to upstream dudanov/MideaUART.** This fork is
+1. **DO NOT open a PR to upstream dudanov/MideaUART.** This fork is
    model-specific (MAW12AV1QWT-C) and will not be submitted upstream.
-3. Optional: Update README with ionizer usage example.
+2. **HA dashboard card** — redesign using native HA cards (no HACS). The
+   "Auto" label now comes from the fork directly; no template climate needed.
+
+---
+
+## Auto mode label (resolved in the fork)
+
+HA's frontend displays `CLIMATE_MODE_HEAT_COOL` as "Heat/Cool" and
+`CLIMATE_MODE_AUTO` as "Auto" — these are two distinct ESPHome/HA enum
+values. The MAW12AV1QWT-C uses its "Auto" mode to maintain a set temperature
+(cooling-only); `CLIMATE_MODE_AUTO` is semantically correct for this.
+
+**Fix (committed to `feat/ionizer-support`):** Renamed `HEAT_COOL` → `AUTO`
+in `ALLOWED_CLIMATE_MODES` (`climate.py`) and switched all three
+`CLIMATE_MODE_HEAT_COOL` references in `ac_adapter.cpp` to
+`CLIMATE_MODE_AUTO`. `ac-living-room.yaml` updated to `- AUTO` in
+`supported_modes`. Wire protocol unchanged — `MideaMode::MODE_AUTO` is still
+what goes over UART.
+
+**Note:** HA's `climate` template platform does NOT exist in stock HA
+(`No module named 'homeassistant.components.template.climate'`). The fork
+approach is the correct solution — no HA-side configuration needed.
 
 ---
 

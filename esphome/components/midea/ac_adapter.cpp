@@ -15,7 +15,7 @@ const char *const Constants::TURBO = "turbo";
 ClimateMode Converters::to_climate_mode(MideaMode mode) {
   switch (mode) {
     case MideaMode::MODE_AUTO:
-      return ClimateMode::CLIMATE_MODE_HEAT_COOL;
+      return ClimateMode::CLIMATE_MODE_AUTO;
     case MideaMode::MODE_COOL:
       return ClimateMode::CLIMATE_MODE_COOL;
     case MideaMode::MODE_DRY:
@@ -31,7 +31,7 @@ ClimateMode Converters::to_climate_mode(MideaMode mode) {
 
 MideaMode Converters::to_midea_mode(ClimateMode mode) {
   switch (mode) {
-    case ClimateMode::CLIMATE_MODE_HEAT_COOL:
+    case ClimateMode::CLIMATE_MODE_AUTO:
       return MideaMode::MODE_AUTO;
     case ClimateMode::CLIMATE_MODE_COOL:
       return MideaMode::MODE_COOL;
@@ -157,7 +157,7 @@ MideaPreset Converters::to_midea_preset(const char *preset) { return MideaPreset
 
 void Converters::to_climate_traits(ClimateTraits &traits, const dudanov::midea::ac::Capabilities &capabilities) {
   if (capabilities.supportAutoMode())
-    traits.add_supported_mode(ClimateMode::CLIMATE_MODE_HEAT_COOL);
+    traits.add_supported_mode(ClimateMode::CLIMATE_MODE_AUTO);
   if (capabilities.supportCoolMode())
     traits.add_supported_mode(ClimateMode::CLIMATE_MODE_COOL);
   if (capabilities.supportHeatMode())

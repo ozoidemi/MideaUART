@@ -65,7 +65,12 @@ esphome:
     #   2.9 — ECO+Ionizer Test (temp): programmatic 3-cycle / 24-check script.
     #         Verified 24/24. Removed in 2.11.
     #   2.11 — Remove ECO+ionizer test scaffolding (passed 24/24, no longer needed).
-    version: "2.11"
+    #   2.12 — Add HEAT_COOL to supported_modes explicitly so Auto mode is always
+    #          present in HA regardless of autoconf status.
+    #   2.13 — Remap HEAT_COOL → AUTO in ac_adapter.cpp and climate.py so HA
+    #          renders the mode as "Auto" instead of "Heat/Cool". Wire protocol
+    #          unchanged; MideaMode::MODE_AUTO still sent over UART.
+    version: "2.13"
 
 external_components:
   - source:
@@ -185,9 +190,10 @@ climate:
       max_temperature: "${visual_max_temperature}"
       temperature_step: "${visual_temperature_step}"
     supported_modes:
-      - FAN_ONLY
+      - AUTO
       - COOL
       - DRY
+      - FAN_ONLY
     custom_fan_modes:
       - SILENT
       - TURBO
