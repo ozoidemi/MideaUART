@@ -73,7 +73,9 @@ esphome:
     #   2.14 — Swing: button → state-backed switch (reads climate swing_mode).
     #          Display: kept as button (no UART state readback, optimistic
     #          switch would drift). Added explicit power-off button entity.
-    version: "2.14"
+    #   2.15 — Remove power-off button entity; off handled via hvac_modes
+    #          feature in the HA card (inline with mode buttons).
+    version: "2.15"
 
 external_components:
   - source:
@@ -235,13 +237,6 @@ button:
     icon: mdi:theme-light-dark
     on_press:
       - midea_ac.display_toggle:
-
-  - platform: template
-    name: ${friendly_name} Off
-    id: midea_power_off
-    icon: mdi:power-off
-    on_press:
-      - midea_ac.power_off:
 
 switch:
   - platform: template
