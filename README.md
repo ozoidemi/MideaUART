@@ -1,9 +1,7 @@
 # Disclaimer
-This fork tries to enable functionality that isn't directly available on the original branch. Particularly for the Midea MAW12AV1QWT-C A/C from Costco (US).
+This fork focuses on Midea MAW12AV1QWT-C A/C from Costco (US) exclusively.
 
 This specific unit has a ionizer function that is only accessible via the front panel. This fork addresses that gap so that the ionizer can be activated via software.
-
-I'm keeping most of the original text, including the link to buy coffee to dudanov on purpose. They deserve all the praise here.
 
 # MideaUART
 
