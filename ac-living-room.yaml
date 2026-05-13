@@ -76,7 +76,7 @@ external_components:
   - source:
       type: git
       url: https://github.com/ozoidemi/MideaUART.git
-      ref: feat/ionizer-support
+      ref: d5a911b
     components: [midea]
 
 esp8266:
