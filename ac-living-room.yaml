@@ -70,7 +70,10 @@ esphome:
     #   2.13 — Remap HEAT_COOL → AUTO in ac_adapter.cpp and climate.py so HA
     #          renders the mode as "Auto" instead of "Heat/Cool". Wire protocol
     #          unchanged; MideaMode::MODE_AUTO still sent over UART.
-    version: "2.13"
+    #   2.14 — Swing: button → state-backed switch (reads climate swing_mode).
+    #          Display: kept as button (no UART state readback, optimistic
+    #          switch would drift). Added explicit power-off button entity.
+    version: "2.14"
 
 external_components:
   - source:
@@ -234,11 +237,11 @@ button:
       - midea_ac.display_toggle:
 
   - platform: template
-    name: ${friendly_name} Swing Step
-    id: midea_swing_step
-    icon: mdi:tailwind
+    name: ${friendly_name} Off
+    id: midea_power_off
+    icon: mdi:power-off
     on_press:
-      - midea_ac.swing_step:
+      - midea_ac.power_off:
 
 switch:
   - platform: template
@@ -259,6 +262,22 @@ switch:
       - lambda: id(midea_climate).set_ionizer(true);
     turn_off_action:
       - lambda: id(midea_climate).set_ionizer(false);
+  - platform: template
+    name: ${friendly_name} Swing
+    id: midea_swing
+    icon: mdi:tailwind
+    lambda: |-
+      return id(midea_climate).swing_mode == climate::CLIMATE_SWING_VERTICAL;
+    turn_on_action:
+      - lambda: |-
+          auto call = id(midea_climate).make_call();
+          call.set_swing_mode("vertical");
+          call.perform();
+    turn_off_action:
+      - lambda: |-
+          auto call = id(midea_climate).make_call();
+          call.set_swing_mode("off");
+          call.perform();
 
 sensor:
   - platform: wifi_signal
