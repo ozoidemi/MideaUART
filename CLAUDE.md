@@ -27,7 +27,7 @@ remote ever exposes it.
 - v2.9/2.10 — ECO+ionizer test (passed 24/24, removed in v2.11)
 - v2.11 — test scaffolding removed
 - v2.12 — `HEAT_COOL` added explicitly to `supported_modes` (was autoconf-gated)
-- v2.13 — Remap `HEAT_COOL` → `AUTO` in `ac_adapter.cpp` and `climate.py`; HA now renders the mode as "Auto". Wire protocol unchanged.
+- v2.13 — Remap `HEAT_COOL` → `AUTO` in `ac_adapter.cpp` and `climate.py`; HA now renders the mode as "Auto". Wire protocol unchanged. Commit `01fd494`. Rollback: `git revert 01fd494` (returns to `da68d08`).
 
 ### C++ library changes — DONE
 
