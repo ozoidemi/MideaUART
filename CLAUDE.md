@@ -14,14 +14,19 @@ The Mshield ionizer on the MAW12AV1QWT-C is a real hardware feature but is
 - Toggled by holding SWING+FLASHCOOL on the unit's panel for 3 seconds.
 - Display flashes "ON" or "OF" (sic, no second F) to indicate state.
 
+**Panel button topology (important — do not confuse these):**
+- **FlashCool**: single dedicated button on the panel.
+- **Swing**: single dedicated button on the panel; this AC supports vertical swing only (on/off).
+- **Ionizer**: the only panel function requiring a 2-button chord — hold SWING+FLASHCOOL simultaneously for 3 seconds.
+
 Midea's MCU does, however, publish ionizer state on the SmartKey UART. We
 verified this empirically (see "Empirical findings" below). The bit just
 isn't decoded by the upstream library, because no public Midea app or
 remote ever exposes it.
 
-## Current status (as of 2026-05-13)
+## Current status (as of 2026-05-14)
 
-### ac-living-room.yaml — current version: 2.21
+### ac-living-room.yaml — current version: 2.26
 
 - v2.8 — switched to `external_components` for our fork
 - v2.9/2.10 — ECO+ionizer test (passed 24/24, removed in v2.11)
@@ -51,6 +56,25 @@ remote ever exposes it.
 - v2.21 — FC SET bit discovery script: `setRawBit`/`setTestBit`/`set_test_bit`
   added to library. 4-candidate sequential script (C1–C4) with 5s waits and
   baseline comparison to identify the FlashCool SET bit. Remove after confirmed.
+  C1–C4 results (logs(16)): all miss — bytes 9/8/6/10 rejected silently by AC.
+- v2.22 — FC SET sweep batch 2: bytes 11–14 with bit 5 (0x20), candidates C5–C8.
+  C5–C8 results (run(8)): all miss — bytes 11/12/13/14 bit 5 rejected silently by AC.
+- v2.23 — FC SET sweep: bytes 15–20 with 0x20 (C9–C14); bytes 11–12 with 0x40 (C15–C16).
+  C9–C16 results (run(9)): all miss.
+- v2.24 — Exhaustive FC SET sweep, 32 candidates (~5.5 min):
+  C17–C24: 0x40 bytes 13–20; C25–C34: 0x80 bytes 11–20;
+  C35–C44: 0x1F bytes 11–20 (bits 0–4 combined);
+  C45: [6]0xDF, C46: [8]0x9F, C47: [9]0x0F, C48: [10]0xF0 (remaining bits, known bits excluded).
+  C17–C48 results (run(10)): all miss. CONCLUSION: FlashCool is not controllable
+  via the 0x40 SET frame — panel-only via UART. 48 candidates exhausted total.
+- v2.25 — Remove FC SET discovery scaffolding: `setRawBit`/`setTestBit`/`set_test_bit`
+  removed from C++ library and ESPHome component. `g_fc_baseline` global, `FC Set Test: RUN`
+  button, and entire `fc_set_test` script removed from YAML. `fc_state` binary_sensor
+  retained (read-only FC monitoring via 0xB5 frames).
+- v2.26 — B5 property SET test: `SetPropertyData` class added to library; `m_setFlashCool` /
+  `setFlashCool` added to `AirConditioner`; `set_fc(bool)` added to ESPHome component.
+  Sends `{0xB5, 0x02, 0x01, 0x67, 0x00, 0x01, value}` via `DEVICE_QUERY` (fire-and-forget).
+  Two buttons wired in YAML: `FC B5 Set ON` / `FC B5 Set OFF`. Watch `g_fc_bit` for result.
 
 ### C++ library changes — DONE
 
@@ -142,7 +166,7 @@ purely AC-side behavior; the library sends what is requested.
 Accepted in COOL mode. BOOST maps to `PRESET_TURBO` (`m_data[8]` bit 5 +
 `m_data[10]` bit 1). This is NOT FlashCool — FlashCool has its own LED and
 its state arrives in 0xB5 unsolicited frames (TLV 0x6700), not the 0xC0
-polled status frame. No write path identified in the 0xC0 SET frame.
+polled status frame. No write path identified in the 0x40 SET frame.
 
 **Ionizer coexistence (all confirmed):**
 D1–D4 all PASS: ionizer coexists with ECO and SLEEP; survives preset changes
@@ -210,9 +234,16 @@ Notes:
 
 1. **DO NOT open a PR to upstream dudanov/MideaUART.** This fork is
    model-specific (MAW12AV1QWT-C) and will not be submitted upstream.
-2. **FlashCool write path unknown.** No FC control bit found in the 0xC0
-   SET frame. FlashCool appears to be panel-only; `fc_state` is read-only.
-   No HA switch entity — binary_sensor only.
+2. **FlashCool write path — in progress (v2.26).** 0x40 SET frame exhaustively ruled
+   out (48 candidates). New hypothesis: 0xB5 property SET frame, since FC read uses
+   0xB5 notifications (architecturally separate from all other features). Test: send
+   `{0xB5, 0x02, 0x01, 0x67, 0x00, 0x01, value}` via `FC B5 Set ON` / `FC B5 Set OFF`
+   buttons. Watch `g_fc_bit` / `fc_state` for change. Sub-command 0x02 = SET hypothesis;
+   0x01 = GET (used by capabilities query). If 0x02 misses, try 0x00 or other sub-commands.
+   **Before testing: toggle FC ON then OFF from panel to sync g_fc_bit=0.**
+3. **fc_state sensor is event-driven** — updates only on B5 FC state-change
+   notifications. No AC poll mechanism exists for FC state. After reboot,
+   g_fc_bit=false (stale if FC was ON). Accuracy restored on next panel toggle.
 
 ---
 
@@ -315,8 +346,9 @@ both read and write — asymmetry does not apply here.
 - **Parser:** scan bytes[12..size-2] for `67 00 01`; read FC value at i+3.
   First match is sufficient; break after first hit. All records in a single
   frame carry the same FC value when multiple are present.
-- **Write path:** unknown. No FC control bit found in 0xC0 SET frame.
-  FlashCool is likely panel-only via UART; `fc_state` is read-only.
+- **Write path:** under investigation. 0x40 SET frame exhaustively ruled out (48 candidates).
+  v2.26 test: 0xB5 property SET `{0xB5, 0x02, 0x01, 0x67, 0x00, 0x01, value}` — same property
+  ID as the read-side notification, sub-command 0x02 (SET hypothesis). Result pending.
 
 ### No overlap with Turbo
 

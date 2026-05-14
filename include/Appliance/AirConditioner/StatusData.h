@@ -119,9 +119,6 @@ class StatusData : public FrameData {
   bool getIonizer() const { return this->m_getValue(9, 32); }
   void setIonizer(bool state) { this->m_setMask(9, state, 32); }
 
-  /* RAW BIT TEST — discovery only, remove after FC bit confirmed */
-  void setRawBit(uint8_t idx, uint8_t mask, bool state) { this->m_setMask(idx, state, mask); }
-
  protected:
   /* POWER */
   bool m_getPower() const { return this->m_getValue(1, 1); }
@@ -176,6 +173,14 @@ class GetCapabilitiesData : public FrameData {
 class GetCapabilitiesSecondData : public FrameData {
  public:
   GetCapabilitiesSecondData() : FrameData({0xB5, 0x01, 0x01, 0x00}) { this->appendCRC(); }
+};
+
+// 0xB5 property SET frame: sub-command 0x02, one TLV record.
+// prop_lo/prop_hi are the property ID bytes in wire order (same as seen in notifications).
+class SetPropertyData : public FrameData {
+ public:
+  SetPropertyData(uint8_t prop_lo, uint8_t prop_hi, uint8_t value)
+    : FrameData({0xB5, 0x02, 0x01, prop_lo, prop_hi, 0x01, value}) { this->appendCRC(); }
 };
 
 }  // namespace ac

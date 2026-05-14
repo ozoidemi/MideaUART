@@ -122,12 +122,10 @@ void AirConditioner::m_setStatus(StatusData status) {
   );
 }
 
-void AirConditioner::setTestBit(uint8_t byteIdx, uint8_t mask, bool state) {
-  StatusData status = this->m_status;
-  status.setRawBit(byteIdx, mask, state);
-  status.setBeeper(this->m_beeper);
-  status.appendCRC();
-  this->m_setStatus(std::move(status));
+void AirConditioner::m_setFlashCool(bool state) {
+  SetPropertyData data(0x67, 0x00, state ? 0x01 : 0x00);
+  LOG_D(TAG, "Enqueuing a B5 SET_PROPERTY(FlashCool=%d) notify...", state);
+  this->m_queueNotify(FrameType::DEVICE_QUERY, std::move(data));
 }
 
 void AirConditioner::setPowerState(bool state) {
