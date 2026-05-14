@@ -21,13 +21,36 @@ remote ever exposes it.
 
 ## Current status (as of 2026-05-13)
 
-### ac-living-room.yaml — current version: 2.13
+### ac-living-room.yaml — current version: 2.21
 
 - v2.8 — switched to `external_components` for our fork
 - v2.9/2.10 — ECO+ionizer test (passed 24/24, removed in v2.11)
 - v2.11 — test scaffolding removed
 - v2.12 — `HEAT_COOL` added explicitly to `supported_modes` (was autoconf-gated)
 - v2.13 — Remap `HEAT_COOL` → `AUTO` in `ac_adapter.cpp` and `climate.py`; HA now renders the mode as "Auto". Wire protocol unchanged. Commit `01fd494`. Rollback: `git revert 01fd494` (returns to `da68d08`).
+- v2.14 — Swing: button → state-backed template switch (reads `climate.swing_mode`
+  via lambda). Display: kept as button (no UART state readback; an optimistic switch
+  would drift). Added explicit power-off button entity (later removed in v2.15).
+  Commit `1d86c10`.
+- v2.15 — Remove power-off button entity. "Off" is surfaced via the `climate-hvac-modes`
+  feature in the HA card (inline with mode buttons). Commit `ae9edb0`.
+- v2.16 — Mode restriction test: programmatic script (22 checks) covering all
+  mode/fan/preset combinations and coexistence rules. Results: 14 PASS / 8 FAIL
+  (6 spurious from ECO boot-state contamination; 2 genuine AC rejections: ECO
+  and SLEEP are silently rejected in AUTO mode).
+- v2.17 — Remove mode restriction test scaffolding (globals, button, script).
+  Findings documented in CLAUDE.md as observational guides.
+- v2.18 — FlashCool UART discovery test: START/STOP buttons enable verbose
+  frame logging; Mark-ON/Mark-OFF buttons label FC transitions.
+- v2.19 — Extended FC frame logger to cover bytes[33-43] (full body).
+  FC and swing confirmed independent. C0 body confirmed: no FlashCool bit
+  anywhere in the 0xC0 polled frame. bytes[33-43] all-zero.
+- v2.20 — FlashCool binary_sensor (`fc_state`): B5 frame parser added;
+  TLV `67 00 01 XX` tracks FC state (XX=01 ON, XX=00 OFF). FC test
+  scaffolding removed (4 buttons, `g_fc_test_active` global, FRAME logger).
+- v2.21 — FC SET bit discovery script: `setRawBit`/`setTestBit`/`set_test_bit`
+  added to library. 4-candidate sequential script (C1–C4) with 5s waits and
+  baseline comparison to identify the FlashCool SET bit. Remove after confirmed.
 
 ### C++ library changes — DONE
 
@@ -58,11 +81,15 @@ In `esphome/components/midea/` within this repo (used via `external_components`)
 - **`climate.py`** (`3313de1`) — Modified `to_code()` to reference our fork
   and to explicitly add `ESP8266WiFi` (ESP8266) or `WiFi` (ESP32) as a
   project-level library dep.
-- **`climate.py` + `ac_adapter.cpp`** — Renamed `HEAT_COOL` → `AUTO` in
+- **`climate.py` + `ac_adapter.cpp`** (`01fd494`) — Renamed `HEAT_COOL` → `AUTO` in
   `ALLOWED_CLIMATE_MODES` and switched all three `CLIMATE_MODE_HEAT_COOL`
   references in `ac_adapter.cpp` to `CLIMATE_MODE_AUTO`. HA now displays the
   mode as "Auto" natively. Wire protocol unchanged: `MideaMode::MODE_AUTO`
   still sent over UART.
+- **Swing switch** (`1d86c10`) — Added state-backed `${friendly_name} Swing`
+  template switch. Lambda reads `id(midea_climate).swing_mode ==
+  climate::CLIMATE_SWING_VERTICAL`; turn-on/off actions issue `make_call()`.
+  Not optimistic — state tracks the AC. Replaces the former `swing_step` button.
 
 ### Hardware testing status
 
@@ -77,13 +104,115 @@ In `esphome/components/midea/` within this repo (used via `external_components`)
   script (ac-living-room.yaml v2.10) confirmed all ECO↔ionizer state crossings
   correct: preset changes don't affect ionizer, ionizer changes don't affect
   ECO, and both can be active simultaneously without interference.
+- **Mode restriction tests** (ac-living-room.yaml v2.16): 22 checks, 14 PASS /
+  8 FAIL (6 spurious, 2 genuine). See "Mode restriction findings" below.
+
+### Mode restriction findings (observational guides, AC enforces silently)
+
+These are the results of the v2.16 programmatic test (22 checks across Groups
+A–E). **The card is NOT restricted based on these findings** — the AC silently
+enforces its own limits and echoes back what it accepted. These are guides for
+user expectations, not hard constraints.
+
+**Fan speed locking (confirmed):**
+- AUTO and DRY modes: fan locked to AUTO regardless of what is sent. Sending
+  LOW, HIGH, or SILENT — the AC echoes AUTO.
+- COOL and FAN_ONLY: all fan speeds accepted, including SILENT and HIGH.
+
+**ECO preset (observed behavior):**
+- COOL: ECO accepted. While ECO is active, fan is also locked to AUTO (AC
+  enforces; sending other fan speeds echoes AUTO).
+- DRY: ECO accepted.
+- AUTO: ECO silently rejected. AC echoes NONE. (Genuine AC enforcement.)
+- FAN_ONLY: ECO silently rejected. AC echoes NONE.
+
+**SLEEP preset (observed behavior):**
+- COOL: SLEEP accepted.
+- AUTO: SLEEP silently rejected. (Genuine AC enforcement.)
+- DRY: SLEEP silently rejected.
+- FAN_ONLY: SLEEP silently rejected.
+
+**Per-mode preset memory (observed behavior):**
+The AC maintains mode-specific preset state. If ECO was active in COOL, then
+you switched to DRY, then back to COOL — the AC restores ECO automatically,
+even if an ECO-disable signal (0x10) was sent during the DRY phase. This is
+purely AC-side behavior; the library sends what is requested.
+
+**BOOST/TURBO (confirmed):**
+Accepted in COOL mode. BOOST maps to `PRESET_TURBO` (`m_data[8]` bit 5 +
+`m_data[10]` bit 1). This is NOT FlashCool — FlashCool has its own LED and
+its state arrives in 0xB5 unsolicited frames (TLV 0x6700), not the 0xC0
+polled status frame. No write path identified in the 0xC0 SET frame.
+
+**Ionizer coexistence (all confirmed):**
+D1–D4 all PASS: ionizer coexists with ECO and SLEEP; survives preset changes
+and mode switches. See "ECO+ionizer coexistence" above for the earlier 24/24
+confirmation.
+
+### HA dashboard card — DONE
+
+Native HA cards only (no HACS). Final card YAML (two cards in a `grid`):
+
+```yaml
+square: false
+type: grid
+columns: 1
+cards:
+  - type: thermostat
+    entity: climate.ac_living_room_ac_living_room
+    features:
+      - type: climate-hvac-modes
+        hvac_modes:
+          - "off"
+          - auto
+          - cool
+          - fan_only
+          - dry
+      - type: climate-fan-modes
+        fan_modes:
+          - auto
+          - silent
+          - low
+          - medium
+          - high
+      - type: climate-preset-modes
+        preset_modes:
+          - none
+          - eco
+          - boost
+          - sleep
+  - type: entities
+    entities:
+      - entity: switch.ac_living_room_ac_ionizer
+        name: Ionizer
+      - entity: switch.ac_living_room_ac_living_room_swing
+        name: Swing
+      - entity: switch.ac_living_room_ac_living_room_beeper
+        name: Beeper
+      - entity: button.ac_living_room_ac_living_room_display_toggle
+        name: Display
+    show_header_toggle: false
+```
+
+Notes:
+- "Off" is placed inline with mode buttons via `climate-hvac-modes` — the only
+  native way to keep on/off at the same visual level as mode selection.
+- Display stays a button (no UART state readback; optimistic switch would drift).
+- Entity order in the entities card: Ionizer → Swing → Beeper → Display.
+- `boost` maps to `PRESET_TURBO` in the library (writes `m_data[8]` bit 5 and
+  `m_data[10]` bit 1). **This is NOT FlashCool.** FlashCool is a distinct AC
+  feature with its own front-panel LED; its state arrives via 0xB5 unsolicited
+  frames (TLV 0x6700) and is exposed as the `fc_state` binary_sensor.
+  Confirmed empirically: pressing FlashCool on the panel lights the FlashCool
+  LED; sending `PRESET_TURBO` via UART does not.
 
 ### Remaining work
 
 1. **DO NOT open a PR to upstream dudanov/MideaUART.** This fork is
    model-specific (MAW12AV1QWT-C) and will not be submitted upstream.
-2. **HA dashboard card** — redesign using native HA cards (no HACS). The
-   "Auto" label now comes from the fork directly; no template climate needed.
+2. **FlashCool write path unknown.** No FC control bit found in the 0xC0
+   SET frame. FlashCool appears to be panel-only; `fc_state` is read-only.
+   No HA switch entity — binary_sensor only.
 
 ---
 
@@ -168,6 +297,27 @@ This proves the response and SET frame layouts are not field-for-field
 symmetric. Ionizer (bit 5 = 0x20) was verified to use the same bit on
 both read and write — asymmetry does not apply here.
 
+### FlashCool state (opcode 0xB5 unsolicited notification)
+
+- FlashCool state is **NOT** in the 0xC0 polled status frame. Entire body
+  bytes[11..41] confirmed flat across FC state changes. bytes[33-43]
+  confirmed all-zero. Verified across 6 complete ON/OFF cycles (3 in
+  log(14), 3 in log(15)), zero false transitions.
+- FlashCool state IS in 0xB5 unsolicited notification frames pushed by the
+  AC immediately upon panel toggle (< 10ms observed).
+- **TLV record: `67 00 01 XX`** — property ID 0x6700 (2 bytes), length 0x01
+  (1 byte), value 1 byte. XX=0x01 = FC ON, XX=0x00 = FC OFF.
+- **B5 frame format:**
+  `AA <len> AC 00 00 00 00 00 08 05 B5 <count> <TLV...> <ctr> <CRC16>`
+  - bytes[10] = 0xB5 (opcode distinguishes it from 0xC0 polled response)
+  - bytes[11] = TLV record count (accumulates during active toggling; 1 in steady state)
+  - bytes[12..] = TLV records; last 3 bytes = counter + CRC16
+- **Parser:** scan bytes[12..size-2] for `67 00 01`; read FC value at i+3.
+  First match is sufficient; break after first hit. All records in a single
+  frame carry the same FC value when multiple are present.
+- **Write path:** unknown. No FC control bit found in 0xC0 SET frame.
+  FlashCool is likely panel-only via UART; `fc_state` is read-only.
+
 ### No overlap with Turbo
 
 `StatusData.h`:
@@ -222,14 +372,24 @@ external_components:
   - source:
       type: git
       url: https://github.com/ozoidemi/MideaUART
-      ref: feat/ionizer-support
+      ref: d5a911b406049716b238eeeabe0d23edd337ead0   # full 40-char SHA required
     components: [midea]
 ```
+
+**IMPORTANT: Use the full 40-character SHA as `ref`, not a branch name or short hash.**
+Branch names and short hashes both fail with `couldn't find remote ref`. The full SHA
+also forces a Python component cache miss when the ref changes — ESPHome caches the
+Python files (climate.py, etc.) keyed on the ref string, so a branch-name ref never
+busts the cache even after new commits are pushed.
 
 `external_components` fetches the Python code (climate.py) AND the C++ component
 files (air_conditioner.h, etc.) from our fork. Those C++ files are cached in
 `.pioenvs`. When air_conditioner.h changes in a new commit, click "Clean Build
 Files" to evict the cached copy and force re-fetch.
+
+Two separate caches to know about:
+- **Python component cache** (climate.py etc.): keyed on the `ref` string. Change the SHA pin → cache miss → fresh fetch.
+- **`.pioenvs`** (compiled C++ objects): cleared by "Clean Build Files" in ESPHome UI.
 
 ---
 

@@ -38,6 +38,7 @@ class AirConditioner : public ApplianceBase {
   FanMode getFanMode() const { return this->m_fanMode; }
   Preset getPreset() const { return this->m_preset; }
   bool getIonizer() const { return this->m_ionizer; }
+  void setTestBit(uint8_t byteIdx, uint8_t mask, bool state);
   const Capabilities &getCapabilities() const { return this->m_capabilities; }
   void displayToggle() { this->m_displayToggle(); }
  protected:

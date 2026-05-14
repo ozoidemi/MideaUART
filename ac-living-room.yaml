@@ -26,9 +26,10 @@
 #     unplugged and the ionizer state resets, this entity will follow.
 #
 # FlashCool note:
-#   FlashCool is NOT the same as the BOOST preset on this model — it's a
-#   separate IR-only feature. Capturing it for replay via remote_transmitter
-#   is a future task; not addressed in this revision.
+#   FlashCool is NOT the same as the BOOST preset on this model. FlashCool
+#   state arrives in 0xB5 unsolicited notifications (TLV 0x6700) and is
+#   exposed as the fc_state binary_sensor. Write path is unknown — read-only.
+#   IR replay via remote_transmitter is not implemented.
 # =============================================================================
 
 substitutions:
@@ -75,7 +76,23 @@ esphome:
     #          switch would drift). Added explicit power-off button entity.
     #   2.15 — Remove power-off button entity; off handled via hvac_modes
     #          feature in the HA card (inline with mode buttons).
-    version: "2.15"
+    #   2.16 — Mode restriction test: covers all mode/fan/preset combinations
+    #          and coexistence rules from the user manual. 14 PASS / 8 FAIL
+    #          (6 spurious, 2 genuine: ECO+SLEEP silently rejected in AUTO).
+    #   2.17 — Remove mode restriction test scaffolding. Findings in CLAUDE.md.
+    #   2.18 — FlashCool UART discovery test: START/STOP buttons enable verbose
+    #          frame logging; Mark-ON/Mark-OFF buttons label the transitions.
+    #          Removed dead on_button_click script.
+    #   2.19 — Extended FC frame logger to cover bytes[33-43] (full body).
+    #          FC and swing confirmed independent: FC chord does not affect
+    #          swing bits. Previous FC=swing-bits conclusion was wrong.
+    #   2.20 — FlashCool binary_sensor: B5 frame parser added; TLV 67 00 01 XX
+    #          confirms FC state (XX=01 ON, XX=00 OFF). FC test scaffolding
+    #          removed (4 buttons, g_fc_test_active global, FRAME logger block).
+    #   2.21 — FC SET bit discovery: setRawBit/setTestBit/set_test_bit added to
+    #          library; 4-candidate sequential script (C1-C4) with 5s waits and
+    #          baseline comparison. Remove after FC SET bit confirmed.
+    version: "2.21"
 
 external_components:
   - source:
@@ -141,6 +158,14 @@ globals:
     type: bool
     initial_value: 'false'
     restore_value: no   # always re-read from the AC after boot
+  - id: g_fc_bit
+    type: bool
+    initial_value: 'false'
+    restore_value: no   # always re-read from the AC after boot
+  - id: g_fc_baseline
+    type: bool
+    initial_value: 'false'
+    restore_value: no   # scratch space for FC SET bit discovery script
 
 # -----------------------------------------------------------------------------
 # UART: same wiring as before. The midea component is the actual bus consumer;
@@ -160,16 +185,30 @@ uart:
       bytes: 256
     sequence:
       - lambda: |-
-          // Ionizer parsing — polled status response only (0xAA 0x2C ...).
-          if (bytes.size() < 22) return;
-          if (bytes[0] != 0xAA) return;
-          if (bytes[1] != 0x2C) return;
+          if (bytes.size() < 12 || bytes[0] != 0xAA) return;
 
-          // Bit 5 of byte 19 is the ionizer (Mshield) state on the MAW12AV1QWT-C.
+          // B5 unsolicited notification: scan TLV records for FlashCool state.
+          // Format: AA <len> AC 00 00 00 00 00 08 05 B5 <count> <TLV...> <ctr> <CRC16>
+          // TLV 67 00 01 XX: XX=0x01 = FC ON, XX=0x00 = FC OFF.
+          if (bytes[10] == 0xB5) {
+            for (size_t i = 12; i + 3 < bytes.size() - 1; i++) {
+              if (bytes[i] == 0x67 && bytes[i+1] == 0x00 && bytes[i+2] == 0x01) {
+                bool fc = bytes[i+3] != 0x00;
+                if (!id(fc_state).has_state() || fc != id(g_fc_bit)) {
+                  id(g_fc_bit) = fc;
+                  id(fc_state).publish_state(fc);
+                }
+                break;
+              }
+            }
+            return;
+          }
+
+          // Polled status response only (0xAA 0x2C = 44 bytes).
+          if (bytes.size() < 44 || bytes[1] != 0x2C) return;
+
+          // Ionizer: bit 5 of byte 19 (m_data[9] mask 0x20).
           bool ion = (bytes[19] & 0x20) != 0;
-
-          // Seed entity on first qualifying frame; publish on every change.
-          // has_state() self-recovers if the entity resets on HA reconnection.
           if (!id(ionizer_state).has_state() || ion != id(g_ionizer_bit)) {
             id(g_ionizer_bit) = ion;
             id(ionizer_state).publish_state(ion);
@@ -225,6 +264,12 @@ binary_sensor:
     # No `lambda:` poll function — we publish_state directly from the UART
     # parser when the bit changes. This keeps HA's history clean: one event
     # per actual transition, not one per second.
+  - platform: template
+    name: ${friendly_name} FlashCool
+    id: fc_state
+    icon: mdi:lightning-bolt
+    # Published directly from the B5 UART frame parser (TLV 0x6700).
+    # Read-only — no write path identified in 0xC0 SET frame.
 
 button:
   - platform: factory_reset
@@ -237,6 +282,14 @@ button:
     icon: mdi:theme-light-dark
     on_press:
       - midea_ac.display_toggle:
+
+  # --- FC SET bit discovery (remove after bit confirmed) ---------------------
+  - platform: template
+    name: "FC Set Test: RUN"
+    id: fc_set_test_run
+    icon: mdi:magnify
+    on_press:
+      - script.execute: fc_set_test
 
 switch:
   - platform: template
@@ -290,10 +343,87 @@ sensor:
     unit_of_measurement: days
     update_interval: 60s
 
+# --- FC SET bit discovery script (remove after bit confirmed) ----------------
+# Tests 4 candidate SET frame bits sequentially. For each candidate:
+#   1. Capture g_fc_baseline (current B5-reported FC state)
+#   2. Send SET with candidate bit = 1
+#   3. Wait 5s — if FC changes, g_fc_bit != g_fc_baseline → "<<< CHANGED"
+#   4. Send SET with candidate bit = 0
+#   5. Wait 5s
+# Total runtime: ~40s. Trigger via "FC Set Test: RUN" button.
+# Candidates (m_data byte, mask):
+#   C1: [9]  0x40 — adjacent to ionizer bit in the features byte
+#   C2: [8]  0x40 — adjacent byte, near turbo
+#   C3: [6]  0x20 — entirely unknown byte between swing and turbo
+#   C4: [10] 0x08 — adjacent to sleep/turbo/fahrenheit byte
 script:
-  - id: on_button_click
+  - id: fc_set_test
     then:
-      - midea_ac.power_toggle:
+      - lambda: |-
+          ESP_LOGI("FC_TEST", "=== FC SET bit discovery: START ===");
+
+      # C1: m_data[9] 0x40
+      - lambda: |-
+          id(g_fc_baseline) = id(g_fc_bit);
+          ESP_LOGI("FC_TEST", "C1 ON:  m_data[9] 0x40  baseline=%d", (int)id(g_fc_baseline));
+          id(midea_climate).set_test_bit(9, 0x40, true);
+      - delay: 5s
+      - lambda: |-
+          bool changed = id(g_fc_bit) != id(g_fc_baseline);
+          ESP_LOGI("FC_TEST", "C1 ON result:  FC=%d  %s",
+                   (int)id(g_fc_bit), changed ? "<<< CHANGED" : "no change");
+          id(midea_climate).set_test_bit(9, 0x40, false);
+      - delay: 5s
+      - lambda: |-
+          ESP_LOGI("FC_TEST", "C1 OFF result: FC=%d", (int)id(g_fc_bit));
+
+      # C2: m_data[8] 0x40
+      - lambda: |-
+          id(g_fc_baseline) = id(g_fc_bit);
+          ESP_LOGI("FC_TEST", "C2 ON:  m_data[8] 0x40  baseline=%d", (int)id(g_fc_baseline));
+          id(midea_climate).set_test_bit(8, 0x40, true);
+      - delay: 5s
+      - lambda: |-
+          bool changed = id(g_fc_bit) != id(g_fc_baseline);
+          ESP_LOGI("FC_TEST", "C2 ON result:  FC=%d  %s",
+                   (int)id(g_fc_bit), changed ? "<<< CHANGED" : "no change");
+          id(midea_climate).set_test_bit(8, 0x40, false);
+      - delay: 5s
+      - lambda: |-
+          ESP_LOGI("FC_TEST", "C2 OFF result: FC=%d", (int)id(g_fc_bit));
+
+      # C3: m_data[6] 0x20
+      - lambda: |-
+          id(g_fc_baseline) = id(g_fc_bit);
+          ESP_LOGI("FC_TEST", "C3 ON:  m_data[6] 0x20  baseline=%d", (int)id(g_fc_baseline));
+          id(midea_climate).set_test_bit(6, 0x20, true);
+      - delay: 5s
+      - lambda: |-
+          bool changed = id(g_fc_bit) != id(g_fc_baseline);
+          ESP_LOGI("FC_TEST", "C3 ON result:  FC=%d  %s",
+                   (int)id(g_fc_bit), changed ? "<<< CHANGED" : "no change");
+          id(midea_climate).set_test_bit(6, 0x20, false);
+      - delay: 5s
+      - lambda: |-
+          ESP_LOGI("FC_TEST", "C3 OFF result: FC=%d", (int)id(g_fc_bit));
+
+      # C4: m_data[10] 0x08
+      - lambda: |-
+          id(g_fc_baseline) = id(g_fc_bit);
+          ESP_LOGI("FC_TEST", "C4 ON:  m_data[10] 0x08  baseline=%d", (int)id(g_fc_baseline));
+          id(midea_climate).set_test_bit(10, 0x08, true);
+      - delay: 5s
+      - lambda: |-
+          bool changed = id(g_fc_bit) != id(g_fc_baseline);
+          ESP_LOGI("FC_TEST", "C4 ON result:  FC=%d  %s",
+                   (int)id(g_fc_bit), changed ? "<<< CHANGED" : "no change");
+          id(midea_climate).set_test_bit(10, 0x08, false);
+      - delay: 5s
+      - lambda: |-
+          ESP_LOGI("FC_TEST", "C4 OFF result: FC=%d", (int)id(g_fc_bit));
+
+      - lambda: |-
+          ESP_LOGI("FC_TEST", "=== FC SET bit discovery: COMPLETE ===");
 
 interval:
   - interval: 3s

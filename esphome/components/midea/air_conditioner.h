@@ -44,6 +44,10 @@ class AirConditioner : public ApplianceBase<dudanov::midea::ac::AirConditioner>,
   void do_power_off() { this->base_.setPowerState(false); }
   void do_power_toggle() { this->base_.setPowerState(this->mode == ClimateMode::CLIMATE_MODE_OFF); }
   bool get_ionizer() const { return this->base_.getIonizer(); }
+  dudanov::midea::ac::FanMode get_fan_mode() const { return this->base_.getFanMode(); }
+  void set_test_bit(uint8_t byte_idx, uint8_t mask, bool state) {
+    this->base_.setTestBit(byte_idx, mask, state);
+  }
   void set_ionizer(bool state) {
     dudanov::midea::ac::Control ctrl{};
     ctrl.ionizer = state;

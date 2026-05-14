@@ -122,6 +122,14 @@ void AirConditioner::m_setStatus(StatusData status) {
   );
 }
 
+void AirConditioner::setTestBit(uint8_t byteIdx, uint8_t mask, bool state) {
+  StatusData status = this->m_status;
+  status.setRawBit(byteIdx, mask, state);
+  status.setBeeper(this->m_beeper);
+  status.appendCRC();
+  this->m_setStatus(std::move(status));
+}
+
 void AirConditioner::setPowerState(bool state) {
   if (state != this->getPowerState()) {
     Control control;
