@@ -109,7 +109,7 @@ external_components:
   - source:
       type: git
       url: https://github.com/ozoidemi/MideaUART.git
-      ref: 011bfd26e10864925ba2fb5a02c302f16b1eb0a8
+      ref: aa9d39dd43fb50ca7c4a0995bca015e5b52c0680
     components: [midea]
 
 esp8266:
