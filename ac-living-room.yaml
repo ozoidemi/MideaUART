@@ -295,12 +295,24 @@ button:
     name: "FC B5 Set ON"
     id: fc_b5_on
     on_press:
-      - lambda: id(midea_climate).set_fc(true);
+      - lambda: |-
+          ESP_LOGI("FC_B5_TEST", "=== FC B5 SET ON: sending (baseline fc=%d) ===", (int)id(g_fc_bit));
+          id(midea_climate).set_fc(true);
+      - delay: 5s
+      - lambda: |-
+          ESP_LOGI("FC_B5_TEST", "=== FC B5 SET ON result: fc=%d  %s ===",
+                   (int)id(g_fc_bit), id(g_fc_bit) ? "<<< CHANGED TO ON" : "no change");
   - platform: template
     name: "FC B5 Set OFF"
     id: fc_b5_off
     on_press:
-      - lambda: id(midea_climate).set_fc(false);
+      - lambda: |-
+          ESP_LOGI("FC_B5_TEST", "=== FC B5 SET OFF: sending (baseline fc=%d) ===", (int)id(g_fc_bit));
+          id(midea_climate).set_fc(false);
+      - delay: 5s
+      - lambda: |-
+          ESP_LOGI("FC_B5_TEST", "=== FC B5 SET OFF result: fc=%d  %s ===",
+                   (int)id(g_fc_bit), !id(g_fc_bit) ? "<<< CHANGED TO OFF" : "no change");
 
 
 switch:
