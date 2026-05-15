@@ -25,11 +25,10 @@
 #   - This binary_sensor reflects the AC's actual state, so if the unit is
 #     unplugged and the ionizer state resets, this entity will follow.
 #
-# FlashCool note:
-#   FlashCool is NOT the same as the BOOST preset on this model. FlashCool
-#   state arrives in 0xB5 unsolicited notifications (TLV 0x6700) and is
-#   exposed as the fc_state binary_sensor. Write path is unknown — read-only.
-#   IR replay via remote_transmitter is not implemented.
+# FlashCool: the remote has a dedicated button, but the UART write path is
+#   exhausted (0x40 SET sweep 48 candidates + 0xB5 property SET both failed).
+#   IR replay from the SLWF dongle is not viable (no IR emitter on the dongle).
+#   Feature removed in v2.27.
 # =============================================================================
 
 substitutions:
@@ -103,7 +102,11 @@ esphome:
     #   2.26 — B5 property SET test: setFlashCool() sends {0xB5, 0x02, 0x01, 0x67,
     #          0x00, 0x01, value} via DEVICE_QUERY. FC B5 ON/OFF buttons trigger it.
     #          Hypothesis: if read uses 0xB5 notifications, write may use 0xB5 SET.
-    version: "2.26"
+    #          Result: no change. FlashCool write confirmed panel-only via UART.
+    #   2.27 — Remove FlashCool entirely: fc_state binary_sensor, g_fc_bit global,
+    #          B5 frame parser, remote_transmitter, FC test buttons, and all FC
+    #          C++ library code (SetPropertyData, setFlashCool, m_setFlashCool).
+    version: "2.27"
 
 external_components:
   - source:
@@ -160,23 +163,15 @@ time:
       - !secret sntp_server
       - pool.ntp.org
 
-# -----------------------------------------------------------------------------
-# Globals: hold the latest decoded ionizer state so the binary_sensor template
-# can read it. Single bit, single source of truth.
-# -----------------------------------------------------------------------------
 globals:
   - id: g_ionizer_bit
     type: bool
     initial_value: 'false'
     restore_value: no   # always re-read from the AC after boot
-  - id: g_fc_bit
-    type: bool
-    initial_value: 'false'
-    restore_value: no   # always re-read from the AC after boot
 
 # -----------------------------------------------------------------------------
-# UART: same wiring as before. The midea component is the actual bus consumer;
-# we use the debug.sequence hook only to passively observe response frames.
+# UART: the midea component is the actual bus consumer; we use the debug.sequence
+# hook only to passively observe ionizer state from polled status responses.
 # -----------------------------------------------------------------------------
 uart:
   id: uart_midea
@@ -192,27 +187,8 @@ uart:
       bytes: 256
     sequence:
       - lambda: |-
-          if (bytes.size() < 12 || bytes[0] != 0xAA) return;
-
-          // B5 unsolicited notification: scan TLV records for FlashCool state.
-          // Format: AA <len> AC 00 00 00 00 00 08 05 B5 <count> <TLV...> <ctr> <CRC16>
-          // TLV 67 00 01 XX: XX=0x01 = FC ON, XX=0x00 = FC OFF.
-          if (bytes[10] == 0xB5) {
-            for (size_t i = 12; i + 3 < bytes.size() - 1; i++) {
-              if (bytes[i] == 0x67 && bytes[i+1] == 0x00 && bytes[i+2] == 0x01) {
-                bool fc = bytes[i+3] != 0x00;
-                if (!id(fc_state).has_state() || fc != id(g_fc_bit)) {
-                  id(g_fc_bit) = fc;
-                  id(fc_state).publish_state(fc);
-                }
-                break;
-              }
-            }
-            return;
-          }
-
           // Polled status response only (0xAA 0x2C = 44 bytes).
-          if (bytes.size() < 44 || bytes[1] != 0x2C) return;
+          if (bytes.size() < 44 || bytes[0] != 0xAA || bytes[1] != 0x2C) return;
 
           // Ionizer: bit 5 of byte 19 (m_data[9] mask 0x20).
           bool ion = (bytes[19] & 0x20) != 0;
@@ -220,11 +196,6 @@ uart:
             id(g_ionizer_bit) = ion;
             id(ionizer_state).publish_state(ion);
           }
-
-remote_transmitter:
-  id: ir_tx
-  pin: GPIO13
-  carrier_duty_percent: 100%
 
 climate:
   - platform: midea
@@ -271,12 +242,6 @@ binary_sensor:
     # No `lambda:` poll function — we publish_state directly from the UART
     # parser when the bit changes. This keeps HA's history clean: one event
     # per actual transition, not one per second.
-  - platform: template
-    name: ${friendly_name} FlashCool
-    id: fc_state
-    icon: mdi:lightning-bolt
-    # Published directly from the B5 UART frame parser (TLV 0x6700).
-    # Write path under test (v2.26): 0xB5 property SET via set_fc().
 
 button:
   - platform: factory_reset
@@ -289,30 +254,6 @@ button:
     icon: mdi:theme-light-dark
     on_press:
       - midea_ac.display_toggle:
-
-  # v2.26 B5 SET test — remove after result confirmed
-  - platform: template
-    name: "FC B5 Set ON"
-    id: fc_b5_on
-    on_press:
-      - lambda: |-
-          ESP_LOGI("FC_B5_TEST", "=== FC B5 SET ON: sending (baseline fc=%d) ===", (int)id(g_fc_bit));
-          id(midea_climate).set_fc(true);
-      - delay: 5s
-      - lambda: |-
-          ESP_LOGI("FC_B5_TEST", "=== FC B5 SET ON result: fc=%d  %s ===",
-                   (int)id(g_fc_bit), id(g_fc_bit) ? "<<< CHANGED TO ON" : "no change");
-  - platform: template
-    name: "FC B5 Set OFF"
-    id: fc_b5_off
-    on_press:
-      - lambda: |-
-          ESP_LOGI("FC_B5_TEST", "=== FC B5 SET OFF: sending (baseline fc=%d) ===", (int)id(g_fc_bit));
-          id(midea_climate).set_fc(false);
-      - delay: 5s
-      - lambda: |-
-          ESP_LOGI("FC_B5_TEST", "=== FC B5 SET OFF result: fc=%d  %s ===",
-                   (int)id(g_fc_bit), !id(g_fc_bit) ? "<<< CHANGED TO OFF" : "no change");
 
 
 switch:

@@ -175,13 +175,6 @@ class GetCapabilitiesSecondData : public FrameData {
   GetCapabilitiesSecondData() : FrameData({0xB5, 0x01, 0x01, 0x00}) { this->appendCRC(); }
 };
 
-// 0xB5 property SET frame: sub-command 0x02, one TLV record.
-// prop_lo/prop_hi are the property ID bytes in wire order (same as seen in notifications).
-class SetPropertyData : public FrameData {
- public:
-  SetPropertyData(uint8_t prop_lo, uint8_t prop_hi, uint8_t value)
-    : FrameData({0xB5, 0x02, 0x01, prop_lo, prop_hi, 0x01, value}) { this->appendCRC(); }
-};
 
 }  // namespace ac
 }  // namespace midea

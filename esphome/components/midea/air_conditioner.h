@@ -50,7 +50,6 @@ class AirConditioner : public ApplianceBase<dudanov::midea::ac::AirConditioner>,
     ctrl.ionizer = state;
     this->base_.control(ctrl);
   }
-  void set_fc(bool state) { this->base_.setFlashCool(state); }
   void set_supported_modes(ClimateModeMask modes) { this->supported_modes_ = modes; }
   void set_supported_swing_modes(ClimateSwingModeMask modes) { this->supported_swing_modes_ = modes; }
   void set_supported_presets(ClimatePresetMask presets) { this->supported_presets_ = presets; }

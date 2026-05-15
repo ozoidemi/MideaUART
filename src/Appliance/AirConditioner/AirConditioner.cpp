@@ -122,12 +122,6 @@ void AirConditioner::m_setStatus(StatusData status) {
   );
 }
 
-void AirConditioner::m_setFlashCool(bool state) {
-  SetPropertyData data(0x67, 0x00, state ? 0x01 : 0x00);
-  LOG_D(TAG, "Enqueuing a B5 SET_PROPERTY(FlashCool=%d) control...", state);
-  this->m_queueNotify(FrameType::DEVICE_CONTROL, std::move(data));
-}
-
 void AirConditioner::setPowerState(bool state) {
   if (state != this->getPowerState()) {
     Control control;

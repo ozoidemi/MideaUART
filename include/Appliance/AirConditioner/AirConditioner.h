@@ -40,14 +40,12 @@ class AirConditioner : public ApplianceBase {
   bool getIonizer() const { return this->m_ionizer; }
   const Capabilities &getCapabilities() const { return this->m_capabilities; }
   void displayToggle() { this->m_displayToggle(); }
-  void setFlashCool(bool state) { this->m_setFlashCool(state); }
  protected:
   void m_getPowerUsage();
   void m_getCapabilities();
   void m_getStatus();
   void m_setStatus(StatusData status);
   void m_displayToggle();
-  void m_setFlashCool(bool state);
   ResponseStatus m_readStatus(FrameData data);
   Capabilities m_capabilities{};
   Timer m_powerUsageTimer;

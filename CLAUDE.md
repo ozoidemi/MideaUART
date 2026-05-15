@@ -26,7 +26,7 @@ remote ever exposes it.
 
 ## Current status (as of 2026-05-14)
 
-### ac-living-room.yaml — current version: 2.26
+### ac-living-room.yaml — current version: 2.27
 
 - v2.8 — switched to `external_components` for our fork
 - v2.9/2.10 — ECO+ionizer test (passed 24/24, removed in v2.11)
@@ -74,7 +74,13 @@ remote ever exposes it.
 - v2.26 — B5 property SET test: `SetPropertyData` class added to library; `m_setFlashCool` /
   `setFlashCool` added to `AirConditioner`; `set_fc(bool)` added to ESPHome component.
   Sends `{0xB5, 0x02, 0x01, 0x67, 0x00, 0x01, value}` via `DEVICE_QUERY` (fire-and-forget).
-  Two buttons wired in YAML: `FC B5 Set ON` / `FC B5 Set OFF`. Watch `g_fc_bit` for result.
+  Two buttons wired in YAML: `FC B5 Set ON` / `FC B5 Set OFF`. Result: no change.
+  FlashCool write confirmed no UART path (panel button + remote IR button only).
+- v2.27 — Remove FlashCool entirely: `SetPropertyData` class, `setFlashCool`/`m_setFlashCool`
+  from C++ library, `set_fc` from ESPHome component; `fc_state` binary_sensor, `g_fc_bit`
+  global, B5 frame parser, `remote_transmitter`, and FC buttons all removed from YAML.
+  The remote has a dedicated FlashCool button (IR), but IR replay is not viable from the
+  SLWF dongle (no IR emitter). UART write path exhaustively ruled out.
 
 ### C++ library changes — DONE
 
@@ -166,7 +172,8 @@ purely AC-side behavior; the library sends what is requested.
 Accepted in COOL mode. BOOST maps to `PRESET_TURBO` (`m_data[8]` bit 5 +
 `m_data[10]` bit 1). This is NOT FlashCool — FlashCool has its own LED and
 its state arrives in 0xB5 unsolicited frames (TLV 0x6700), not the 0xC0
-polled status frame. No write path identified in the 0x40 SET frame.
+polled status frame. No UART write path exists (0x40 SET 48 candidates +
+0xB5 property SET both exhausted); FlashCool removed from firmware in v2.27.
 
 **Ionizer coexistence (all confirmed):**
 D1–D4 all PASS: ionizer coexists with ECO and SLEEP; survives preset changes
@@ -225,8 +232,8 @@ Notes:
 - Entity order in the entities card: Ionizer → Swing → Beeper → Display.
 - `boost` maps to `PRESET_TURBO` in the library (writes `m_data[8]` bit 5 and
   `m_data[10]` bit 1). **This is NOT FlashCool.** FlashCool is a distinct AC
-  feature with its own front-panel LED; its state arrives via 0xB5 unsolicited
-  frames (TLV 0x6700) and is exposed as the `fc_state` binary_sensor.
+  feature with its own front-panel LED and remote button; its state arrives via
+  0xB5 unsolicited frames (TLV 0x6700). No UART write path exists; removed in v2.27.
   Confirmed empirically: pressing FlashCool on the panel lights the FlashCool
   LED; sending `PRESET_TURBO` via UART does not.
 
@@ -234,16 +241,10 @@ Notes:
 
 1. **DO NOT open a PR to upstream dudanov/MideaUART.** This fork is
    model-specific (MAW12AV1QWT-C) and will not be submitted upstream.
-2. **FlashCool write path — in progress (v2.26).** 0x40 SET frame exhaustively ruled
-   out (48 candidates). New hypothesis: 0xB5 property SET frame, since FC read uses
-   0xB5 notifications (architecturally separate from all other features). Test: send
-   `{0xB5, 0x02, 0x01, 0x67, 0x00, 0x01, value}` via `FC B5 Set ON` / `FC B5 Set OFF`
-   buttons. Watch `g_fc_bit` / `fc_state` for change. Sub-command 0x02 = SET hypothesis;
-   0x01 = GET (used by capabilities query). If 0x02 misses, try 0x00 or other sub-commands.
-   **Before testing: toggle FC ON then OFF from panel to sync g_fc_bit=0.**
-3. **fc_state sensor is event-driven** — updates only on B5 FC state-change
-   notifications. No AC poll mechanism exists for FC state. After reboot,
-   g_fc_bit=false (stale if FC was ON). Accuracy restored on next panel toggle.
+2. **FlashCool — closed (v2.27).** 0x40 SET (48 candidates) and 0xB5 property SET
+   both exhausted; no UART write path exists. The physical remote has a FlashCool
+   button (IR), but IR replay is not viable from the SLWF dongle (no IR emitter).
+   Feature removed from firmware.
 
 ---
 
