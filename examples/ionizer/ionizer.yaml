@@ -1,0 +1,171 @@
+# =============================================================================
+# ESPHome example — Midea MAW12AV1QWT-C with ionizer support
+# =============================================================================
+# Uses the ozoidemi/MideaUART fork via external_components.
+# Tested hardware: SLWF-01Pro v2 dongle (ESP8266, board: esp12e) plugged into
+# the AC's SmartKey port (9600 8N1, GPIO12 TX / GPIO14 RX).
+#
+# Features:
+#   Ionizer (Mshield): full read/write via UART. Exposed as a switch entity.
+#   FlashCool:         read-only via 0xB5 unsolicited notifications (TLV 0x6700).
+#                      Write path is panel-only (SWING+FLASHCOOL chord, hold 3s).
+#                      No UART write path exists — see repository README for details.
+# =============================================================================
+
+substitutions:
+  name: "midea-maw12av1qwtc"
+  friendly_name: "Midea MAW12AV1QWT-C"
+
+esphome:
+  name: "${name}"
+  friendly_name: "${friendly_name}"
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/ozoidemi/MideaUART.git
+      # Always pin to a full 40-char SHA. Branch names and short hashes fail
+      # with "couldn't find remote ref". The full SHA also busts ESPHome's
+      # Python component cache when the ref changes.
+      ref: 64c832d3f40a2a63dce8316efb62ccdd7c0dd4d4
+    components: [midea]
+
+esp8266:
+  board: esp12e
+
+logger:
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "${friendly_name} Fallback"
+    password: !secret wifi_ap_password
+
+captive_portal:
+
+# -----------------------------------------------------------------------------
+# Globals — track last-seen bit values to suppress redundant publish_state calls.
+# -----------------------------------------------------------------------------
+globals:
+  - id: g_ionizer_bit
+    type: bool
+    initial_value: 'false'
+    restore_value: no
+  - id: g_fc_bit
+    type: bool
+    initial_value: 'false'
+    restore_value: no
+
+# -----------------------------------------------------------------------------
+# UART — midea component is the bus owner. The debug hook passively reads
+# response frames to extract ionizer and FlashCool state without interfering.
+# -----------------------------------------------------------------------------
+uart:
+  id: uart_midea
+  tx_pin: 12
+  rx_pin: 14
+  baud_rate: 9600
+  debug:
+    direction: RX
+    dummy_receiver: false
+    after:
+      delimiter: "\n"     # never matches; rely on idle timeout for frame end
+      timeout: 50ms
+      bytes: 256
+    sequence:
+      - lambda: |-
+          if (bytes.size() < 12 || bytes[0] != 0xAA) return;
+
+          // B5 unsolicited notification: scan TLV records for FlashCool state.
+          // Format: AA <len> AC 00 00 00 00 00 08 05 B5 <count> <TLV...> <ctr> <CRC16>
+          // TLV 67 00 01 XX: XX=0x01 = FC ON, XX=0x00 = FC OFF.
+          if (bytes[10] == 0xB5) {
+            for (size_t i = 12; i + 3 < bytes.size() - 1; i++) {
+              if (bytes[i] == 0x67 && bytes[i+1] == 0x00 && bytes[i+2] == 0x01) {
+                bool fc = bytes[i+3] != 0x00;
+                if (!id(fc_state).has_state() || fc != id(g_fc_bit)) {
+                  id(g_fc_bit) = fc;
+                  id(fc_state).publish_state(fc);
+                }
+                break;
+              }
+            }
+            return;
+          }
+
+          // Polled status response only (0xAA 0x2C = 44 bytes).
+          if (bytes.size() < 44 || bytes[1] != 0x2C) return;
+
+          // Ionizer: bit 5 of byte 19 (m_data[9] mask 0x20).
+          bool ion = (bytes[19] & 0x20) != 0;
+          if (!id(ionizer_state).has_state() || ion != id(g_ionizer_bit)) {
+            id(g_ionizer_bit) = ion;
+            id(ionizer_state).publish_state(ion);
+          }
+
+climate:
+  - platform: midea
+    name: ${friendly_name}
+    id: midea_ac
+    uart_id: uart_midea
+    period: 1s
+    timeout: 2s
+    num_attempts: 3
+    autoconf: true
+    beeper: true
+    visual:
+      min_temperature: "16 °C"
+      max_temperature: "30 °C"
+      temperature_step: "1.0 °C"
+    supported_modes:
+      - AUTO
+      - COOL
+      - DRY
+      - FAN_ONLY
+    custom_fan_modes:
+      - SILENT
+      - TURBO
+    supported_presets:
+      - ECO
+      - BOOST
+      - SLEEP
+
+binary_sensor:
+  # Ionizer state — published from the polled 0xC0 UART frame (byte 19, bit 5).
+  - platform: template
+    name: ${friendly_name} Ionizer
+    id: ionizer_state
+    icon: mdi:air-purifier
+
+  # FlashCool state — published from the B5 UART frame parser (TLV 0x6700). Read-only.
+  - platform: template
+    name: ${friendly_name} FlashCool
+    id: fc_state
+    icon: mdi:lightning-bolt
+
+switch:
+  # Ionizer switch — full read/write. Turn on/off via HA; state tracks the AC.
+  - platform: template
+    name: ${friendly_name} Ionizer
+    id: ionizer_switch
+    icon: mdi:air-purifier
+    optimistic: false
+    turn_on_action:
+      - lambda: id(midea_ac).set_ionizer(true);
+    turn_off_action:
+      - lambda: id(midea_ac).set_ionizer(false);
+
+interval:
+  # Sync ionizer switch state from the AC every 3 s.
+  - interval: 3s
+    then:
+      - lambda: id(ionizer_switch).publish_state(id(midea_ac).get_ionizer());
