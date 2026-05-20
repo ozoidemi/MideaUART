@@ -16,6 +16,7 @@ struct Control {
   Optional<Preset> preset{};
   Optional<FanMode> fanMode{};
   Optional<SwingMode> swingMode{};
+  Optional<bool> ionizer{};
 };
 
 class AirConditioner : public ApplianceBase {
@@ -36,6 +37,7 @@ class AirConditioner : public ApplianceBase {
   SwingMode getSwingMode() const { return this->m_swingMode; }
   FanMode getFanMode() const { return this->m_fanMode; }
   Preset getPreset() const { return this->m_preset; }
+  bool getIonizer() const { return this->m_ionizer; }
   const Capabilities &getCapabilities() const { return this->m_capabilities; }
   void displayToggle() { this->m_displayToggle(); }
  protected:
@@ -59,6 +61,7 @@ class AirConditioner : public ApplianceBase {
   Preset m_lastPreset{Preset::PRESET_NONE};
   StatusData m_status{};
   bool m_sendControl{};
+  bool m_ionizer{};
 };
 
 }  // namespace ac

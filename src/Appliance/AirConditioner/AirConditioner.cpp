@@ -78,6 +78,10 @@ void AirConditioner::control(const Control &control) {
     hasUpdate = true;
     status.setTargetTemp(control.targetTemp.value());
   }
+  if (control.ionizer.hasUpdate(this->m_ionizer)) {
+    hasUpdate = true;
+    status.setIonizer(control.ionizer.value());
+  }
   if (hasUpdate) {
     this->m_sendControl = true;
     status.setMode(mode);
@@ -218,6 +222,7 @@ ResponseStatus AirConditioner::m_readStatus(FrameData data) {
   setProperty(this->m_indoorTemp, newStatus.getIndoorTemp(), hasUpdate);
   setProperty(this->m_outdoorTemp, newStatus.getOutdoorTemp(), hasUpdate);
   setProperty(this->m_indoorHumidity, newStatus.getHumiditySetpoint(), hasUpdate);
+  setProperty(this->m_ionizer, newStatus.getIonizer(), hasUpdate);
   if (hasUpdate)
     this->sendUpdate();
   return ResponseStatus::RESPONSE_OK;

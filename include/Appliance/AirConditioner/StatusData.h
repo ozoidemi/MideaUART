@@ -115,13 +115,20 @@ class StatusData : public FrameData {
   bool isFahrenheits() const { return this->m_getValue(10, 4); }
   void setFahrenheits(bool state) { this->m_setMask(10, state, 4); }
 
+  /* IONIZER */
+  bool getIonizer() const { return this->m_getValue(9, 32); }
+  void setIonizer(bool state) { this->m_setMask(9, state, 32); }
+
  protected:
   /* POWER */
   bool m_getPower() const { return this->m_getValue(1, 1); }
   void m_setPower(bool state) { this->m_setMask(1, state, 1); }
   /* ECO MODE */
   bool m_getEco() const { return this->m_getValue(9, 16); }
-  void m_setEco(bool state) { this->m_setMask(9, state, 128); }
+  void m_setEco(bool state) {
+    this->m_setMask(9, state, 128);
+    this->m_setMask(9, !state, 16);
+  }
   /* TURBO MODE */
   bool m_getTurbo() const { return this->m_getValue(8, 32) || this->m_getValue(10, 2); }
   void m_setTurbo(bool state) {
@@ -167,6 +174,7 @@ class GetCapabilitiesSecondData : public FrameData {
  public:
   GetCapabilitiesSecondData() : FrameData({0xB5, 0x01, 0x01, 0x00}) { this->appendCRC(); }
 };
+
 
 }  // namespace ac
 }  // namespace midea

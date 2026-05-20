@@ -87,6 +87,32 @@ void loop() {
 }
 ```
 
+## Ionizer (Mshield) — MAW12AV1QWT-C
+
+Some Midea models populate an ionizer (Mshield) bit in UART status frames.
+This fork decodes and controls that bit for the MAW12AV1QWT-C.
+
+Read current state via `getIonizer()`, or set it via `Control.ionizer`:
+
+```cpp
+// Read ionizer state
+bool isIonizerOn = ac.getIonizer();
+
+// Turn ionizer on or off (independent of mode/preset)
+static inline void setIonizer(bool state) {
+  Control control;
+  control.ionizer = state;
+  ac.control(control);
+}
+```
+
+Ionizer state survives mode and preset changes — enabling ECO, BOOST, or SLEEP
+does not reset it, and changing ionizer does not affect the active preset.
+
+> **Note:** Hardware-specific. On the MAW12AV1QWT-C the ionizer is normally
+> panel-only (hold SWING+FLASHCOOL for 3 s). This fork exposes it over UART
+> for models where the bit is populated in status frames.
+
 ## My thanks
 
 to the following people for their contributions to reverse engineering the UART protocol and source code in the following repositories:
