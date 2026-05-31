@@ -3,6 +3,8 @@ This fork focuses on Midea MAW12AV1QWT-C A/C from Costco (US) exclusively.
 
 This specific unit has a ionizer function that is only accessible via the front panel. This fork addresses that gap so that the ionizer can be activated via software.
 
+I also tried adding the FlashCool function, but so far I haven't been able to make it work. It is much simpler to just blast the AC on max.
+
 All the descriptions below belong to the original project by Dudanov.
 
 # MideaUART
